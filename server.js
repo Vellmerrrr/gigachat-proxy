@@ -43,7 +43,7 @@ app.post('/chat', async (req, res) => {
     const chatResponse = await axios.post(
       'https://api.giga.chat/v1/chat/completions',
       {
-        model: 'GigaChat',
+        model: 'GigaChat-2',
         messages: [
           { role: 'system', content: 'Ты полезный и дружелюбный помощник. Отвечай кратко и по делу.' },
           { role: 'user', content: message }
