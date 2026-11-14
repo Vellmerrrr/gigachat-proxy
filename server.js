@@ -1,5 +1,4 @@
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -9,16 +8,18 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Ключ берется из переменных окружения Layero
 const GIGACHAT_AUTH_KEY = process.env.GIGACHAT_AUTH_KEY;
 
 let cachedToken = null;
 let tokenExpiry = 0;
 
-// Функция для получения токена
 async function getAccessToken() {
-  if (cachedToken && Date.now() < tokenExpiry) return cachedToken;
+  // Проверяем, что токен есть и до истечения осталось больше 60 секунд
+  if (cachedToken && Date.now() < (tokenExpiry - 60000)) {
+    return cachedToken;
+  }
 
+  console.log('Получаем новый токен GigaChat...');
   const response = await axios.post(
     'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
     'scope=GIGACHAT_API_PERS',
@@ -33,22 +34,21 @@ async function getAccessToken() {
   );
 
   cachedToken = response.data.access_token;
-  tokenExpiry = Date.now() + (response.data.expires_at * 1000) - 60000;
+  // expires_at приходит в миллисекундах
+  tokenExpiry = response.data.expires_at; 
+  console.log('Новый токен получен. Истекает:', new Date(tokenExpiry).toLocaleString());
   return cachedToken;
 }
 
-// Проверка, что сервер жив (для Layero)
 app.get('/', (req, res) => {
   res.send('Proxy is running');
 });
 
-// Основной эндпоинт для чата
 app.post('/chat', async (req, res) => {
   try {
     const { messages } = req.body;
-    const token = await getAccessToken();
+    let token = await getAccessToken();
 
-    // Добавляем системный промпт в начало истории
     const fullMessages = [
       {
         role: 'system',
@@ -65,19 +65,38 @@ app.post('/chat', async (req, res) => {
       ...messages
     ];
 
-    const chatResponse = await axios.post(
-      'https://api.giga.chat/v1/chat/completions',
-      {
-        model: 'GigaChat-2-Pro', // Умная модель
-        messages: fullMessages
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + token
+    // Функция для отправки запроса в GigaChat
+    const sendToGigaChat = async (accessToken) => {
+      return await axios.post(
+        'https://api.giga.chat/v1/chat/completions',
+        {
+          model: 'GigaChat-2-Pro',
+          messages: fullMessages
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + accessToken
+          }
         }
+      );
+    };
+
+    let chatResponse;
+    try {
+      chatResponse = await sendToGigaChat(token);
+    } catch (error) {
+      // Если GigaChat ответил 401 (токен протух), сбрасываем кэш и пробуем ещё раз
+      if (error.response && error.response.status === 401) {
+        console.log('Токен протух, обновляем и пробуем снова...');
+        cachedToken = null; 
+        tokenExpiry = 0;
+        token = await getAccessToken(); // Получаем новый
+        chatResponse = await sendToGigaChat(token); // Повторяем запрос
+      } else {
+        throw error; // Если ошибка другая — пробрасываем дальше
       }
-    );
+    }
 
     res.json({ reply: chatResponse.data.choices[0].message.content });
   } catch (error) {
@@ -86,7 +105,6 @@ app.post('/chat', async (req, res) => {
   }
 });
 
-// Запуск сервера на правильном порту и адресе (важно для Layero!)
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
