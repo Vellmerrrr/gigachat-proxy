@@ -37,17 +37,20 @@ async function getAccessToken() {
 
 app.post('/chat', async (req, res) => {
   try {
-    const { message } = req.body;
+    const { messages } = req.body; // Теперь принимаем массив истории
     const token = await getAccessToken();
+
+    // Добавляем системный промпт в начало истории
+    const fullMessages = [
+      { role: 'system', content: 'Ты полезный и дружелюбный помощник. Отвечай кратко и по делу.' },
+      ...messages // Разворачиваем историю, которую прислал сайт
+    ];
 
     const chatResponse = await axios.post(
       'https://api.giga.chat/v1/chat/completions',
       {
-        model: 'GigaChat-2',
-        messages: [
-          { role: 'system', content: 'Ты полезный и дружелюбный помощник. Отвечай кратко и по делу.' },
-          { role: 'user', content: message }
-        ]
+        model: 'GigaChat-2-Pro',
+        messages: fullMessages // Отправляем всю историю в GigaChat
       },
       {
         headers: {
